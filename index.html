@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Art Gallery Pro - Final Fix</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #111; touch-action: none; font-family: 'Georgia', serif; user-select: none; -webkit-user-select: none; }
+        #ui-layer { position: absolute; top: 20px; width: 100%; text-align: center; pointer-events: none; z-index: 500; }
+        #room-display { font-size: 14px; color: #fff; background: rgba(0,0,0,0.6); padding: 5px 15px; border-radius: 15px; display: inline-block; border: 1px solid #444; }
+        
+        /* ACTION BUTTONS */
+        .action-btn {
+            position: absolute; left: 50%; transform: translate(-50%, -50%);
+            padding: 15px 30px; font-size: 18px; font-weight: bold; color: #fff;
+            border-radius: 50px; cursor: pointer; display: none; z-index: 600;
+        }
+        #door-btn { top: 40%; width: 200px; background: #aa0000; border: 3px solid #fff; }
+        #close-window-btn { top: 80%; width: 200px; background: #008080; border: 3px solid #fff; }
+
+        /* CONTROL ZONES - REDESIGNED TO NOT OVERLAP CENTER */
+        #zone-move { 
+            position: absolute; bottom: 0; left: 0; width: 40vw; height: 50vh; 
+            z-index: 1000; /* Highest priority for movement */
+        }
+        #zone-look { 
+            position: absolute; top: 0; right: 0; width: 40vw; height: 100vh; 
+            z-index: 1000; /* Priority for looking */
+        }
+        
+        #joy-container { position: absolute; width: 100px; height: 100px; display: none; pointer-events: none; z-index: 1100; transform: translate(-50%, -50%); }
+        #joy-base { width: 100%; height: 100%; border: 2px solid rgba(255, 255, 255, 0.4); border-radius: 50%; background: rgba(255, 255, 255, 0.1); }
+        #joy-stick { position: absolute; top: 50%; left: 50%; width: 40px; height: 40px; background: #fff; border-radius: 50%; transform: translate(-50%, -50%); }
+        
+        /* IFRAME STYLING */
+        #html-frame-element { width: 1000px; height: 600px; background: white; border: 15px solid #222; }
+        iframe { width: 100%; height: 100%; border: none; pointer-events: auto; }
+    </style>
+</head>
+<body>
+<video id="skyVideo" loop playsinline muted style="display:none" preload="auto">
+    <source src="sky.mp4" type="video/mp4">
+</video>
+<div id="ui-layer"><div id="room-display">SPAWN ROOM</div></div>
+<button id="door-btn" class="action-btn">🚪 OPEN DOOR</button>
+<button id="close-window-btn" class="action-btn">🪟 CLOSE WINDOW</button>
+
+<div id="zone-move"></div>
+<div id="zone-look"></div>
+<div id="joy-container"><div id="joy-base"></div><div id="joy-stick"></div></div>
+
+<div style="display:none;">
+    <div id="html-frame-element">
+        <iframe src="https://totify.netlify.app/"></iframe>
+    </div>
+</div>
+
+<script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }
+</script>
+
+<script type="module">
+    import * as THREE from 'three';
+    import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
+
+    const CAMERA_HEIGHT = 50; let velocity = new THREE.Vector3(); let move = {x:0, y:0};
+    const DAMPING = 0.85; const floorY = -50; const T = 200; const W = 800; const H = 800; const BACK_Z = -400;
+    const GAP_SIZE = 80; const DOOR_HEIGHT = 120; const PLAYER_RADIUS = 20;
+    let isDoorOpen = false, isWindowClosed = false;
+    let doorMesh, windowGlassMesh;
+
+    const scene = new THREE.Scene();
+    const cssScene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 2000);
+    camera.rotation.order = 'YXZ';
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.domElement.style.position = 'absolute';
+    renderer.domElement.style.zIndex = '1';
+    document.body.appendChild(renderer.domElement);
+
+    const cssRenderer = new CSS3DRenderer();
+    cssRenderer.setSize(window.innerWidth, window.innerHeight);
+    cssRenderer.domElement.style.position = 'absolute';
+    cssRenderer.domElement.style.top = '0';
+    cssRenderer.domElement.style.zIndex = '100'; // Sits above WebGL but below the Joystick/Look zones
+    document.body.appendChild(cssRenderer.domElement);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+    const spawnLight = new THREE.PointLight(0xffaa66, 0.8, 500); 
+    spawnLight.position.set(0, 80, 200); scene.add(spawnLight);
+    const musicLight = new THREE.PointLight(0x66aaff, 1.0, 500); 
+    musicLight.position.set(0, 80, -200); scene.add(musicLight);
+
+    function addBox(w, h, d, x, y, z, mat) {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+        m.position.set(x, y, z); scene.add(m); return m;
+    }
+
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x888888 });
+    addBox(W, 2, H, 0, floorY, 0, new THREE.MeshStandardMaterial({ color: 0x444444 })); 
+    addBox(W, 2, H, 0, floorY + T, 0, new THREE.MeshStandardMaterial({ color: 0xaaaaaa }));
+    addBox(W, T, 10, 0, floorY + T/2, 400, wallMat); 
+    addBox(10, T, H, -400, floorY + T/2, 0, wallMat); 
+    addBox(10, T, H, 400, floorY + T/2, 0, wallMat); 
+    
+    const winW = 230, winH = 125;
+    addBox(W, 30, 10, 0, floorY + 15, BACK_Z, wallMat); 
+    addBox(W, T-(winH+30), 10, 0, floorY+T-(T-winH-30)/2, BACK_Z, wallMat); 
+    addBox((W-winW)/2, winH, 10, -(W-winW)/4 - winW/2, floorY+30+winH/2, BACK_Z, wallMat); 
+    addBox((W-winW)/2, winH, 10, (W-winW)/4 + winW/2, floorY+30+winH/2, BACK_Z, wallMat); 
+    addBox(400 - GAP_SIZE/2, T, 15, -(200 + GAP_SIZE/4), floorY + T/2, 0, wallMat);
+    addBox(400 - GAP_SIZE/2, T, 15, (200 + GAP_SIZE/4), floorY + T/2, 0, wallMat);
+    addBox(GAP_SIZE, T - DOOR_HEIGHT, 15, 0, floorY + DOOR_HEIGHT + (T-DOOR_HEIGHT)/2, 0, wallMat);
+
+    doorMesh = addBox(GAP_SIZE, DOOR_HEIGHT, 8, 0, floorY + DOOR_HEIGHT/2, 0, new THREE.MeshStandardMaterial({color: 0x333333}));
+    const video = document.getElementById('skyVideo'); video.play().catch(()=>{});
+    const vPlane = new THREE.Mesh(new THREE.PlaneGeometry(winW*2, winH*2), new THREE.MeshBasicMaterial({map: new THREE.VideoTexture(video)}));
+    vPlane.position.set(0, floorY + T/2, BACK_Z - 20); scene.add(vPlane);
+    windowGlassMesh = addBox(winW+5, winH+5, 5, -winW, floorY + T/2, BACK_Z + 2, new THREE.MeshPhysicalMaterial({ color: 0xeeeeff, transparent: true, opacity: 0.3 }));
+
+    // SCREEN SETUP
+    const frameEl = document.getElementById('html-frame-element');
+    const cssObj = new CSS3DObject(frameEl);
+    cssObj.position.set(-390, floorY + 100, -200); 
+    cssObj.rotation.y = Math.PI / 2;
+    cssObj.scale.set(0.12, 0.12, 0.12);
+    cssScene.add(cssObj);
+
+    // CONTROLS LOGIC
+    let joyId = null, lookId = null, lastL = {x:0, y:0};
+    const joyS = document.getElementById('joy-stick'), joyC = document.getElementById('joy-container');
+    let joySt = {x:0, y:0};
+
+    document.getElementById('zone-move').addEventListener('touchstart', e => {
+        const t = e.changedTouches[0]; joyId = t.identifier; joySt = {x:t.clientX, y:t.clientY};
+        joyC.style.display='block'; joyC.style.left=t.clientX+'px'; joyC.style.top=t.clientY+'px';
+    });
+    document.getElementById('zone-move').addEventListener('touchmove', e => {
+        for(let t of e.changedTouches) if(t.identifier === joyId) {
+            let dx = t.clientX-joySt.x, dy = t.clientY-joySt.y;
+            const d = Math.min(Math.sqrt(dx*dx+dy*dy), 40); const a = Math.atan2(dy, dx);
+            joyS.style.transform = `translate(calc(-50% + ${Math.cos(a)*d}px), calc(-50% + ${Math.sin(a)*d}px))`;
+            move = {x: Math.cos(a)*d/40, y: Math.sin(a)*d/40};
+        }
+    });
+    document.getElementById('zone-move').addEventListener('touchend', () => { joyId=null; move={x:0,y:0}; joyC.style.display='none'; });
+
+    document.getElementById('zone-look').addEventListener('touchstart', e => {
+        lookId = e.changedTouches[0].identifier; lastL = {x:e.changedTouches[0].clientX, y:e.changedTouches[0].clientY};
+    });
+    document.getElementById('zone-look').addEventListener('touchmove', e => {
+        for(let t of e.changedTouches) if(t.identifier === lookId) {
+            camera.rotation.y -= (t.clientX - lastL.x) * 0.005;
+            camera.rotation.x -= (t.clientY - lastL.y) * 0.005;
+            camera.rotation.x = Math.max(-1.5, Math.min(1.5, camera.rotation.x));
+            lastL = {x:t.clientX, y:t.clientY};
+        }
+    });
+
+    camera.position.set(0, CAMERA_HEIGHT + floorY, 200);
+    const dBtn = document.getElementById('door-btn'), wBtn = document.getElementById('close-window-btn');
+    dBtn.onclick = () => isDoorOpen = !isDoorOpen;
+    wBtn.onclick = () => isWindowClosed = !isWindowClosed;
+
+    function animate() {
+        requestAnimationFrame(animate);
+        if(move.x || move.y) {
+            const f = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion); f.y=0; f.normalize();
+            const r = new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion); r.y=0; r.normalize();
+            velocity.add(f.multiplyScalar(-move.y*2)).add(r.multiplyScalar(move.x*2));
+        }
+        velocity.multiplyScalar(DAMPING); camera.position.add(velocity);
+
+        camera.position.x = Math.max(-380, Math.min(380, camera.position.x));
+        camera.position.z = Math.max(-380, Math.min(380, camera.position.z));
+        if(Math.abs(camera.position.z) < PLAYER_RADIUS + 7 && (!isDoorOpen || Math.abs(camera.position.x) > GAP_SIZE/2)) {
+            camera.position.z = camera.position.z > 0 ? (PLAYER_RADIUS + 7) : -(PLAYER_RADIUS + 7);
+        }
+
+        // AUTO-INTERACTION: Enable website when close
+        const distToWeb = Math.abs(camera.position.x - (-390)) + Math.abs(camera.position.z - (-200));
+        cssRenderer.domElement.style.pointerEvents = (distToWeb < 250) ? 'auto' : 'none';
+
+        if (camera.position.z > 10) {
+            cssObj.visible = false;
+            document.getElementById('room-display').innerText = "SPAWN ROOM";
+        } else {
+            cssObj.visible = true;
+            document.getElementById('room-display').innerText = "MUSIC ROOM";
+        }
+
+        doorMesh.position.x += ((isDoorOpen ? -GAP_SIZE : 0) - doorMesh.position.x) * 0.1;
+        windowGlassMesh.position.x += ((isWindowClosed ? 0 : -winW) - windowGlassMesh.position.x) * 0.05;
+
+        dBtn.style.display = Math.abs(camera.position.z) < 120 ? 'block' : 'none';
+        wBtn.style.display = camera.position.z < -250 ? 'block' : 'none';
+
+        renderer.render(scene, camera);
+        cssRenderer.render(cssScene, camera);
+    }
+    animate();
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth/window.innerHeight; camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight); cssRenderer.setSize(window.innerWidth, window.innerHeight);
+    });
+</script>
+</body>
+</html>
