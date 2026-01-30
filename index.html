@@ -65,7 +65,6 @@
 <div style="display:none;"><div id="html-frame-element"><div id="touch-blocker"></div><iframe id="totify-iframe"></iframe></div></div>
 
 <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }</script>
-
 <script type="module">
     import * as THREE from 'three';
     import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
@@ -75,6 +74,10 @@
     let isDoorOpen = false, isPowered = false, isInteracting = false;
     let velocity = new THREE.Vector3(), move = {x:0, y:0}, savedModels = [];
     window.editingIndex = -1;
+
+    // --- ANIMATION VARIABLES ---
+    let mixers = []; 
+    const clock = new THREE.Clock();
 
     const scene = new THREE.Scene(); 
     const cssScene = new THREE.Scene();
@@ -102,9 +105,8 @@
     const texLoader = new THREE.TextureLoader();
     const loader = new GLTFLoader();
 
-    // HARDCODED STATIC ITEMS (Hidden from UI list)
+    // HARDCODED STATIC ITEMS
     const staticItems = [
-        // 16 Original Floor Tiles
         {src:'Picsart_26-01-08_18-59-32-352.jpg', p:[487,-46,-177], r:[90,0], s:[368,368]}, {src:'Picsart_26-01-08_18-59-32-352.jpg', p:[487,-46,-545], r:[270,0], s:[368,368]},
         {src:'Picsart_26-01-08_18-59-32-352.jpg', p:[119,-46,-545], r:[270,180], s:[368,368]}, {src:'Picsart_26-01-08_18-59-32-352.jpg', p:[119,-46,-177], r:[90,180], s:[368,368]},
         {src:'Picsart_26-01-08_18-59-32-352.jpg', p:[-249,-46,-177], r:[90,0], s:[368,368]}, {src:'Picsart_26-01-08_18-59-32-352.jpg', p:[-249,-46,-545], r:[270,0], s:[368,368]},
@@ -113,7 +115,6 @@
         {src:'Picsart_26-01-08_18-59-32-352.jpg', p:[-249,-46,557], r:[270,180], s:[368,368]}, {src:'Picsart_26-01-08_18-59-32-352.jpg', p:[-249,-46,189], r:[90,180], s:[368,368]}, 
         {src:'Picsart_26-01-08_18-59-32-352.jpg', p:[-617,-46,189], r:[270,180], s:[368,368]}, {src:'Picsart_26-01-08_18-59-32-352.jpg', p:[-617,-46,557], r:[90,180], s:[368,368]}, 
         {src:'Picsart_26-01-08_18-59-32-352.jpg', p:[-617,-46,-177], r:[90,180], s:[368,368]}, {src:'Picsart_26-01-08_18-59-32-352.jpg', p:[-617,-46,-545], r:[270,180], s:[368,368]},
-        // 35 Scene Items
         { src: 'surface-with-abstract-watercolor-paint_23-2148733391 (1).jpg', p: [-599, 48, -306], r: [0, 90], s: [622, 582] },
         { src: 'images - 2026-01-30T184744.639.jpeg', p: [598, 184, -599], r: [0, 0], s: [800, 589] },
         { src: 'images - 2026-01-30T184744.639.jpeg', p: [-202, 184, -599], r: [0, 0], s: [800, 589] },
@@ -161,7 +162,42 @@
         });
     });
 
-    // PRO TOOLS Logic (For USER additions)
+   
+
+        // --- HARDCODED MODELS LOADER ---
+     const glbItems = [
+        { src: 'rocco_on_his_couch.glb', p: [494, 8, 284], r: [0, 270], s: [136, 136, 136] },
+        { src: 'end_table_-_wooden_with_magazine_rack.glb', p: [522, -39, 510], r: [0, 180], s: [98, 98, 98] },
+        { src: 'ventilador.glb', p: [16, 189, 320], r: [0, 0], s: [85, 85, 85] },
+        { src: 'light_switch (1).glb', p: [-70, -26, 9], r: [180, 180], s: [155, 155, 155] },
+        { src: 'light_switch (1).glb', p: [73, -26, -9], r: [0, 0], s: [155, 155, 155] },
+        { src: '2533ef500ece4fcc804872c706df036b (1).glb', p: [-7, 177, 7], r: [0, 0], s: [41, 41, 41] },
+        { src: 'stage.glb', p: [-294, 97, -564], r: [0, 90], s: [173, 173, 173] },
+        { src: 'stage.glb', p: [-553, 97, -564], r: [0, 90], s: [173, 173, 173] },
+        { src: 'stage.glb', p: [236, 97, -564], r: [0, 90], s: [173, 173, 173] },
+        { src: 'stage.glb', p: [-30, 97, -564], r: [0, 90], s: [173, 173, 173] },
+        { src: 'stage.glb', p: [493, 97, -564], r: [0, 90], s: [173, 173, 173] }
+    ];
+
+
+
+    glbItems.forEach(item => {
+        loader.load(item.src, (gltf) => {
+            const model = gltf.scene;
+            model.position.set(item.p[0], item.p[1], item.p[2]);
+            model.rotation.set(THREE.MathUtils.degToRad(item.r[0]), THREE.MathUtils.degToRad(item.r[1]), 0);
+            model.scale.set(item.s[0], item.s[1], item.s[2]);
+            
+            // Auto-play model animations if they exist
+            if (gltf.animations.length > 0) {
+                const mixer = new THREE.AnimationMixer(model);
+                gltf.animations.forEach(clip => mixer.clipAction(clip).play());
+                mixers.push(mixer);
+            }
+            scene.add(model);
+        });
+    });
+
     window.snap = (id, val) => { document.getElementById(id).value = val; document.getElementById('box-'+id).value = val; updateTransform(); };
     window.step = (id, amt) => { let el = document.getElementById(id); el.value = (parseFloat(el.value) + amt).toFixed(1); document.getElementById('box-'+id).value = el.value; updateTransform(); };
 
@@ -191,7 +227,15 @@
                 m.position.copy(spawnPos); m.scale.set(60, 60, 1); addUserModel(m, file.name, true);
             });
         } else {
-            loader.load(url, (gltf) => { gltf.scene.position.copy(spawnPos); addUserModel(gltf.scene, file.name, false); });
+            loader.load(url, (gltf) => { 
+                gltf.scene.position.copy(spawnPos); 
+                if (gltf.animations.length > 0) {
+                    const mixer = new THREE.AnimationMixer(gltf.scene);
+                    gltf.animations.forEach(clip => mixer.clipAction(clip).play());
+                    mixers.push(mixer);
+                }
+                addUserModel(gltf.scene, file.name, false); 
+            });
         }
     };
 
@@ -241,7 +285,6 @@
         navigator.clipboard.writeText(output).then(() => { alert("Copied!"); });
     };
 
-    // ROOM STRUCTURES
     const box = (w, h, d, x, y, z, color) => {
         const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshStandardMaterial({color, roughness: 0.1}));
         m.position.set(x,y,z); scene.add(m); return m;
@@ -252,13 +295,11 @@
     box(550, T, 15, -325, floorY+T/2, 0, "#333"); box(550, T, 15, 325, floorY+T/2, 0, "#333"); 
     box(100, T-180, 15, 0, floorY+260, 0, "#333"); const doorMesh = box(100, 180, 8, 0, floorY + 90, 0, "#111");
 
-    // TV / WIN7 IFRAME
     const frameEl = document.getElementById('html-frame-element');
     const cssObj = new CSS3DObject(frameEl); cssObj.position.set(-585, floorY + 150, -300); cssObj.rotation.y = Math.PI/2; cssObj.scale.set(0.15, 0.15, 0.15); cssScene.add(cssObj);
     const occMesh = new THREE.Mesh(new THREE.PlaneGeometry(1280, 720), new THREE.MeshBasicMaterial({ color: 0x000, transparent: true, opacity: 0, blending: THREE.NoBlending }));
     occMesh.position.copy(cssObj.position); occMesh.rotation.copy(cssObj.rotation); occMesh.scale.copy(cssObj.scale); scene.add(occMesh);
 
-    // CONTROLS
     let joyId = null, lookId = null, lastL = {x:0, y:0}, joySt = {x:0, y:0};
     const zMove = document.getElementById('zone-move'), zLook = document.getElementById('zone-look'), joyS = document.getElementById('joy-stick'), joyC = document.getElementById('joy-container');
     zMove.addEventListener('touchstart', e => { if(isInteracting) return; const t = e.changedTouches[0]; joyId = t.identifier; joySt = {x:t.clientX, y:t.clientY}; joyC.style.display='block'; joyC.style.left=t.clientX+'px'; joyC.style.top=t.clientY+'px'; });
@@ -284,6 +325,11 @@
     camera.position.set(0, 50, 400);
     function animate() {
         requestAnimationFrame(animate);
+
+        // --- UPDATE GLB ANIMATIONS ---
+        const delta = clock.getDelta();
+        mixers.forEach(mixer => mixer.update(delta));
+
         if(!isInteracting) {
             const f = new THREE.Vector3(0,0,-1).applyQuaternion(camera.quaternion); f.y=0; f.normalize();
             const r = new THREE.Vector3(1,0,0).applyQuaternion(camera.quaternion); r.y=0; r.normalize();
@@ -302,5 +348,7 @@
     }
     animate();
 </script>
+
+
 </body>
 </html>
