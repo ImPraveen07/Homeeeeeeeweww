@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -94,39 +95,30 @@
     import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
-    // --- IMPROVED ROBUST CACHING ENGINE ---
+    // --- CACHING ENGINE ---
     const DB_NAME = "GalleryCache_V2", STORE_NAME = "models";
     let db = null;
-
     const initDB = () => new Promise((res) => {
         const req = indexedDB.open(DB_NAME, 2);
         req.onupgradeneeded = e => {
             let database = e.target.result;
-            if (!database.objectStoreNames.contains(STORE_NAME)) {
-                database.createObjectStore(STORE_NAME);
-            }
+            if (!database.objectStoreNames.contains(STORE_NAME)) database.createObjectStore(STORE_NAME);
         };
         req.onsuccess = e => { db = e.target.result; res(); };
-        req.onerror = () => { console.warn("DB Failed"); res(); }; // Silently continue on error
+        req.onerror = () => res();
     });
-
     const getCached = (key) => new Promise(res => {
         if (!db) return res(null);
-        try {
-            const tx = db.transaction(STORE_NAME, "readonly");
-            const req = tx.objectStore(STORE_NAME).get(key);
-            req.onsuccess = () => res(req.result);
-            req.onerror = () => res(null);
-        } catch(e) { res(null); }
+        const tx = db.transaction(STORE_NAME, "readonly");
+        const req = tx.objectStore(STORE_NAME).get(key);
+        req.onsuccess = () => res(req.result);
+        req.onerror = () => res(null);
     });
-
     const saveCached = (key, blob) => new Promise(res => {
         if (!db) return res();
-        try {
-            const tx = db.transaction(STORE_NAME, "readwrite");
-            tx.objectStore(STORE_NAME).put(blob, key);
-            tx.oncomplete = () => res();
-        } catch(e) { res(); }
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        tx.objectStore(STORE_NAME).put(blob, key);
+        tx.oncomplete = () => res();
     });
 
     // --- THREE JS INIT ---
@@ -149,7 +141,7 @@
     document.body.appendChild(cssRenderer.domElement);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x111111, 1); 
     renderer.domElement.style.position = 'absolute';
@@ -160,6 +152,13 @@
     scene.add(new THREE.AmbientLight(0xffffff, 1.5));
     const texLoader = new THREE.TextureLoader();
     const loader = new GLTFLoader();
+
+    // MEMORY FIX: Shared Texture Cache
+    const textureCache = {};
+    const getTex = (url) => {
+        if (!textureCache[url]) textureCache[url] = texLoader.load(url);
+        return textureCache[url];
+    };
 
     const glbItems = [
         { src: 'rocco_on_his_couch.glb', p: [494, 8, 284], r: [0, 270], s: [136, 136, 136] },
@@ -184,44 +183,38 @@
         const statsText = document.getElementById('loader-stats');
         const progressBar = document.getElementById('progress-bar');
         const msgText = document.getElementById('loader-msg');
-
-        let loadedCount = 0;
-        let totalMB = 0;
+        let loadedCount = 0, totalMB = 0;
 
         for (let item of glbItems) {
             let blob = await getCached(item.src);
-            let url;
-
             if (!blob) {
                 msgText.innerText = `Fetching: ${item.src}`;
                 const res = await fetch(item.src);
                 blob = await res.blob();
                 await saveCached(item.src, blob);
-            } else {
-                msgText.innerText = `Optimizing: ${item.src}`;
             }
-
-            totalMB += (blob.size / (1024 * 1024));
+            if(blob) totalMB += (blob.size / (1024 * 1024));
             loadedCount++;
             statsText.innerText = `${totalMB.toFixed(1)} MB Loaded`;
             progressBar.style.width = `${(loadedCount / glbItems.length) * 100}%`;
-
-            url = URL.createObjectURL(blob);
-            loader.load(url, (gltf) => {
-                const model = gltf.scene;
-                model.position.set(item.p[0], item.p[1], item.p[2]);
-                model.rotation.set(THREE.MathUtils.degToRad(item.r[0]), THREE.MathUtils.degToRad(item.r[1]), 0);
-                model.scale.set(item.s[0], item.s[1], item.s[2]);
-                if (gltf.animations.length > 0) {
-                    const mixer = new THREE.AnimationMixer(model);
-                    gltf.animations.forEach(clip => mixer.clipAction(clip).play());
-                    mixers.push(mixer);
-                }
-                scene.add(model);
-            });
+            if(blob) {
+                const url = URL.createObjectURL(blob);
+                loader.load(url, (gltf) => {
+                    const model = gltf.scene;
+                    model.position.set(item.p[0], item.p[1], item.p[2]);
+                    model.rotation.set(THREE.MathUtils.degToRad(item.r[0]), THREE.MathUtils.degToRad(item.r[1]), 0);
+                    model.scale.set(item.s[0], item.s[1], item.s[2]);
+                    if (gltf.animations.length > 0) {
+                        const mixer = new THREE.AnimationMixer(model);
+                        gltf.animations.forEach(clip => mixer.clipAction(clip).play());
+                        mixers.push(mixer);
+                    }
+                    scene.add(model);
+                    URL.revokeObjectURL(url);
+                });
+            }
         }
 
-        // LOAD STATIC IMAGES
         const staticItems = [
             {src:'Picsart_26-01-08_18-59-32-352.jpg', p:[487,-46,-177], r:[90,0], s:[368,368]}, {src:'Picsart_26-01-08_18-59-32-352.jpg', p:[487,-46,-545], r:[270,0], s:[368,368]},
             {src:'Picsart_26-01-08_18-59-32-352.jpg', p:[119,-46,-545], r:[270,180], s:[368,368]}, {src:'Picsart_26-01-08_18-59-32-352.jpg', p:[119,-46,-177], r:[90,180], s:[368,368]},
@@ -269,23 +262,18 @@
         ];
 
         staticItems.forEach(d => {
-            texLoader.load(d.src, (tex) => {
-                const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: tex, side: 2, transparent: true }));
-                m.position.set(d.p[0], d.p[1], d.p[2]); m.rotation.set(THREE.MathUtils.degToRad(d.r[0]), THREE.MathUtils.degToRad(d.r[1]), 0); m.scale.set(d.s[0], d.s[1], 1);
-                scene.add(m);
-            });
+            const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: getTex(d.src), side: 2, transparent: true }));
+            m.position.set(d.p[0], d.p[1], d.p[2]); m.rotation.set(THREE.MathUtils.degToRad(d.r[0]), THREE.MathUtils.degToRad(d.r[1]), 0); m.scale.set(d.s[0], d.s[1], 1);
+            scene.add(m);
         });
 
         setTimeout(() => {
             document.getElementById('loader-screen').style.opacity = '0';
-            setTimeout(() => {
-                document.getElementById('loader-screen').style.display = 'none';
-                animate();
-            }, 500);
+            setTimeout(() => { document.getElementById('loader-screen').style.display = 'none'; animate(); }, 500);
         }, 1000);
     }
 
-    // --- PRO TOOLS (RESTORED) ---
+    // --- PRO TOOLS (FIXED) ---
     window.snap = (id, val) => { document.getElementById(id).value = val; document.getElementById('box-'+id).value = val; updateTransform(); };
     window.step = (id, amt) => { let el = document.getElementById(id); el.value = (parseFloat(el.value) + amt).toFixed(1); document.getElementById('box-'+id).value = el.value; updateTransform(); };
     const config = [{ id: 'posX', label: 'Pos X', min: -1200, max: 1200 }, { id: 'posY', label: 'Pos Y', min: -150, max: 800 }, { id: 'posZ', label: 'Pos Z', min: -1200, max: 1200 }, { id: 'rotY', label: 'Rot Horiz', min: 0, max: 360, snaps: [0, 90, 180, 270] }, { id: 'rotX', label: 'Rot Vert', min: 0, max: 360, snaps: [0, 90, 180, 270] }, { id: 'width', label: 'Scale W', min: 1, max: 800 }, { id: 'height', label: 'Scale H', min: 1, max: 800 }];
@@ -307,10 +295,7 @@
                 m.position.copy(spawnPos); m.scale.set(60, 60, 1); addUserModel(m, file.name, true);
             });
         } else {
-            loader.load(url, (gltf) => { 
-                gltf.scene.position.copy(spawnPos); 
-                addUserModel(gltf.scene, file.name, false); 
-            });
+            loader.load(url, (gltf) => { gltf.scene.position.copy(spawnPos); addUserModel(gltf.scene, file.name, false); });
         }
     };
 
@@ -357,7 +342,6 @@
         navigator.clipboard.writeText(output).then(() => alert("Copied!"));
     };
 
-    // --- ROOM GEOMETRY ---
     const box = (w, h, d, x, y, z, color) => {
         const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshStandardMaterial({color, roughness: 0.1}));
         m.position.set(x,y,z); scene.add(m); return m;
@@ -373,14 +357,15 @@
     const occMesh = new THREE.Mesh(new THREE.PlaneGeometry(1280, 720), new THREE.MeshBasicMaterial({ color: 0x000, transparent: true, opacity: 0, blending: THREE.NoBlending }));
     occMesh.position.copy(cssObj.position); occMesh.rotation.copy(cssObj.rotation); occMesh.scale.copy(cssObj.scale); scene.add(occMesh);
 
-    // --- CONTROLS ---
     let joyId = null, lookId = null, lastL = {x:0, y:0}, joySt = {x:0, y:0};
     const zMove = document.getElementById('zone-move'), zLook = document.getElementById('zone-look'), joyS = document.getElementById('joy-stick'), joyC = document.getElementById('joy-container');
     zMove.addEventListener('touchstart', e => { if(isInteracting) return; const t = e.changedTouches[0]; joyId = t.identifier; joySt = {x:t.clientX, y:t.clientY}; joyC.style.display='block'; joyC.style.left=t.clientX+'px'; joyC.style.top=t.clientY+'px'; });
     zMove.addEventListener('touchmove', e => { if(isInteracting) return; for(let t of e.changedTouches) if(t.identifier === joyId) { let dx = t.clientX-joySt.x, dy = t.clientY-joySt.y; const d = Math.min(Math.sqrt(dx*dx+dy*dy), 35); const a = Math.atan2(dy, dx); joyS.style.transform = `translate(calc(-50% + ${Math.cos(a)*d}px), calc(-50% + ${Math.sin(a)*d}px))`; move = {x: Math.cos(a)*d/35, y: Math.sin(a)*d/35}; } });
     zMove.addEventListener('touchend', () => { joyId=null; move={x:0,y:0}; joyC.style.display='none'; });
+    
+    // LOOK SENSITIVITY REDUCED: 0.003 -> 0.002
     zLook.addEventListener('touchstart', e => { if(isInteracting) return; lookId = e.changedTouches[0].identifier; lastL = {x:e.changedTouches[0].clientX, y:e.changedTouches[0].clientY}; });
-    zLook.addEventListener('touchmove', e => { if(isInteracting) return; for(let t of e.changedTouches) if(t.identifier === lookId) { camera.rotation.y -= (t.clientX - lastL.x) * 0.005; camera.rotation.x -= (t.clientY - lastL.y) * 0.005; camera.rotation.x = Math.max(-1.4, Math.min(1.4, camera.rotation.x)); lastL = {x:t.clientX, y:t.clientY}; } });
+    zLook.addEventListener('touchmove', e => { if(isInteracting) return; for(let t of e.changedTouches) if(t.identifier === lookId) { camera.rotation.y -= (t.clientX - lastL.x) * 0.0035; camera.rotation.x -= (t.clientY - lastL.y) * 0.0035; camera.rotation.x = Math.max(-1.4, Math.min(1.4, camera.rotation.x)); lastL = {x:t.clientX, y:t.clientY}; } });
 
     const iBtn = document.getElementById('interact-btn'), pBtn = document.getElementById('power-btn');
     document.getElementById('door-btn').onclick = () => isDoorOpen = !isDoorOpen;
@@ -398,11 +383,15 @@
         if(!isInteracting && (move.x !== 0 || move.y !== 0)) {
             fVec.set(0,0,-1).applyQuaternion(camera.quaternion); fVec.y=0; fVec.normalize();
             rVec.set(1,0,0).applyQuaternion(camera.quaternion); rVec.y=0; rVec.normalize();
-            velocity.add(fVec.multiplyScalar(-move.y * 3.0)).add(rVec.multiplyScalar(move.x * 3.0));
+            // MOVEMENT SPEED REDUCED: 3.0 -> 1.5
+            velocity.add(fVec.multiplyScalar(-move.y *.8)).add(rVec.multiplyScalar(move.x * 1.5));
         }
         velocity.multiplyScalar(0.9); camera.position.add(velocity);
-        camera.position.x = Math.max(-560, Math.min(560, camera.position.x)); camera.position.z = Math.max(-560, Math.min(560, camera.position.z));
+        
+        // COLLISION & BOUNDARIES
+        camera.position.x = Math.max(-550, Math.min(550, camera.position.x)); camera.position.z = Math.max(-550, Math.min(550, camera.position.z));
         if(Math.abs(camera.position.z) < 25 && (!isDoorOpen || Math.abs(camera.position.x) > 45)) camera.position.z = camera.position.z > 0 ? 25 : -25;
+        
         savedModels.forEach(m => m.label.quaternion.copy(camera.quaternion));
         document.getElementById('door-btn').style.display = Math.abs(camera.position.z) < 180 ? 'block' : 'none';
         pBtn.style.display = (camera.position.z < 0 && camera.position.distanceTo(cssObj.position) < 450) ? 'block' : 'none';
