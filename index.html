@@ -143,7 +143,7 @@
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = .5; // Boosted for better lighting close-up
+    renderer.toneMappingExposure = .5;
 
     renderer.setClearColor(0x111111, 1); 
     renderer.domElement.style.position = 'absolute';
@@ -156,7 +156,7 @@
 
     scene.add(new THREE.AmbientLight(0xffffff, 1.2));
     const dirLight = new THREE.DirectionalLight(0xffffff, 2.5);
-    dirLight.position.set(0, 300, 0); // Moved to top-center to light models from all sides
+    dirLight.position.set(0, 300, 0); 
     scene.add(dirLight);
 
     const texLoader = new THREE.TextureLoader();
@@ -209,23 +209,16 @@
             progressBar.style.width = `${(loadedCount / glbItems.length) * 100}%`;
             if(blob) {
                 const url = URL.createObjectURL(blob);
-                                loader.load(url, (gltf) => {
+                loader.load(url, (gltf) => {
                     const model = gltf.scene;
-                    
                     model.traverse(node => {
                         if (node.isMesh && node.material) {
-                            // TARGET: Balloons and Birthday Sign
                             if (item.src === 'indu.glb' || item.src === 'hbday.glb') {
-                                node.material.metalness = 1.0;       // Must be 1 for metal
-                                node.material.roughness = 0.05;      // Slight roughness keeps the "shine" visible
-                                node.material.envMapIntensity = 15.0; // High, but not so high it washes out detail
-                                
-                                // Color tuning: Makes the gold "deeper" so reflections show up better
-                                if(node.material.color) {
-                                    node.material.color.multiplyScalar(0.8); 
-                                }
+                                node.material.metalness = 1.0;
+                                node.material.roughness = 0.05;
+                                node.material.envMapIntensity = 15.0; // HIGH EXPOSURE POP
+                                if(node.material.color) node.material.color.multiplyScalar(0.8);
                             } else {
-                                // TARGET: Normal furniture
                                 node.material.metalness = 0.0;
                                 node.material.roughness = 0.8;
                                 node.material.envMapIntensity = 1.0;
@@ -243,12 +236,9 @@
                         gltf.animations.forEach(clip => mixer.clipAction(clip).play());
                         mixers.push(mixer);
                     }
-                    
                     scene.add(model);
                     URL.revokeObjectURL(url);
                 });
-
-
             }
         }
 
@@ -310,7 +300,19 @@
         }, 1000);
     }
 
-    // --- PRO TOOLS FIX ---
+    // --- COPY SYSTEM LOGIC ---
+    document.getElementById('copy-btn').addEventListener('click', () => {
+        if (savedModels.length === 0) { alert("No user models to copy!"); return; }
+        let output = "--- USER MODELS LIST ---\n\n";
+        savedModels.forEach(item => {
+            const p = item.mesh.position;
+            const r = item.mesh.rotation;
+            const s = item.mesh.scale;
+            output += `{ src: '${item.name}', p: [${Math.round(p.x)}, ${Math.round(p.y)}, ${Math.round(p.z)}], r: [${Math.round(THREE.MathUtils.radToDeg(r.x))}, ${Math.round(THREE.MathUtils.radToDeg(r.y))}], s: [${Math.round(s.x)}, ${Math.round(s.y)}, ${Math.round(s.z)}] },\n`;
+        });
+        navigator.clipboard.writeText(output).then(() => alert("Scene info copied to clipboard!"));
+    });
+
     window.snap = (id, val) => { 
         document.getElementById(id).value = val; 
         document.getElementById('box-'+id).value = val; 
@@ -372,8 +374,8 @@
                 model.traverse(node => { 
                     if(node.isMesh && node.material) {
                         node.material.envMapIntensity = 2.5; 
-                        node.material.roughness = 0.02;
-                        node.material.metalness = 1.0;
+                        node.material.roughness = 0.1;
+                        node.material.metalness = 0.8;
                     }
                 });
                 model.position.copy(spawnPos); addUserModel(model, file.name, false); 
