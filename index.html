@@ -193,8 +193,9 @@
         { src: 'textured.glb', p: [1, 27, -385], r: [0, 0], s: [14, 14, 14] },
         { src: 'tablecloth_lowpoly.glb', p: [-69, -35, -265], r: [0, 90], s: [90, 90, 90] },
         { src: 'tablecloth_lowpoly.glb', p: [79, -35, -265], r: [0, 90], s: [90, 90, 90] },
-        { src: 'hamper1.glb', p: [-46, 20, -216], r: [0, 0], s: [11, 11, 11] },
-        { src: 'cam.glb', p: [65, 12, -314], r: [265, 0], s: [5, 5, 5] }
+          { src: 'hamper1.glb', p: [-46, 20, -216], r: [0, 0], s: [11, 11, 11] },
+
+              { src: 'cam.glb', p: [65, 12, -314], r: [265, 0], s: [5, 5, 5] }
     ];
 
     async function boot() {
@@ -320,12 +321,12 @@
     window.snap = (id, val) => { document.getElementById(id).value = val; document.getElementById('box-'+id).value = val; updateTransform(); };
     window.step = (id, amt) => { let el = document.getElementById(id); el.value = (parseFloat(el.value) + amt).toFixed(1); document.getElementById('box-'+id).value = el.value; updateTransform(); };
 
-    // TOOLBOX MODIFIED: MIN VALUES SET TO -800 FOR NEGATIVE SIZE SUPPORT
     const config = [
         { id: 'posX', label: 'Pos X', min: -1200, max: 1200 }, { id: 'posY', label: 'Pos Y', min: -150, max: 800 }, { id: 'posZ', label: 'Pos Z', min: -1200, max: 1200 }, 
         { id: 'rotY', label: 'Rot Horiz', min: 0, max: 360, snaps: [0, 90, 180, 270] }, { id: 'rotX', label: 'Rot Vert', min: 0, max: 360, snaps: [0, 90, 180, 270] }, 
-        { id: 'width', label: 'Scale W', min: -800, max: 800 }, { id: 'height', label: 'Scale H', min: -800, max: 800 }
-    ];
+        { id: 'width', label: 'Scale W', min: 1, max: 800 }, { id: 'height', label: 'Scale H', min: 1, max: 800 }
+
+      ];
 
     const dynContainer = document.getElementById('dynamic-controls');
     config.forEach(c => {
@@ -371,17 +372,30 @@
     }
 
     function updateTransform() {
-        if (window.editingIndex === -1) return;
-        const d = savedModels[window.editingIndex], val = (id) => parseFloat(document.getElementById(id).value);
-        d.mesh.position.set(val('posX'), val('posY'), val('posZ'));
-        d.mesh.rotation.set(THREE.MathUtils.degToRad(val('rotX')), THREE.MathUtils.degToRad(val('rotY')), 0);
-        if(d.isImg) d.mesh.scale.set(val('width'), val('height'), 1); else d.mesh.scale.set(val('width'), val('width'), val('width'));
-        d.label.position.copy(d.mesh.position); d.label.position.y += (d.isImg ? Math.abs(val('height'))/2 : Math.abs(val('width'))) + 15;
+    if (window.editingIndex === -1) return;
+    const d = savedModels[window.editingIndex], val = (id) => parseFloat(document.getElementById(id).value);
+    
+    // Update Position
+    d.mesh.position.set(val('posX'), val('posY'), val('posZ'));
+    
+    // Update Rotation
+    d.mesh.rotation.set(THREE.MathUtils.degToRad(val('rotX')), THREE.MathUtils.degToRad(val('rotY')), 0);
+    
+    // Update Scale (Supports negative values now)
+    if(d.isImg) {
+        d.mesh.scale.set(val('width'), val('height'), 1);
+    } else {
+        d.mesh.scale.set(val('width'), val('width'), val('width'));
     }
+    
+    // Update Label Position (Math.abs ensures it stays ON TOP even if scale is negative)
+    d.label.position.copy(d.mesh.position); 
+    d.label.position.y += (d.isImg ? Math.abs(val('height')) / 2 : Math.abs(val('width'))) + 15;
+}
 
     window.editM = (i) => startEditing(i);
     window.delM = (i) => { 
-        disposeObj(savedModels[i].mesh);
+        disposeObj(savedModels[i].mesh); // FULL GPU CLEAN
         scene.remove(savedModels[i].mesh); 
         cssScene.remove(savedModels[i].label); 
         savedModels.splice(i, 1); window.editingIndex = -1; updateListUI(); 
