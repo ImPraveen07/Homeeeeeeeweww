@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -94,8 +93,8 @@
     import * as THREE from 'three';
     import { CSS3DRenderer, CSS3DObject } from 'three/addons/renderers/CSS3DRenderer.js';
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-    // --- CACHING ENGINE ---
     const DB_NAME = "GalleryCache_V2", STORE_NAME = "models";
     let db = null;
     const initDB = () => new Promise((res) => {
@@ -121,7 +120,6 @@
         tx.oncomplete = () => res();
     });
 
-    // --- THREE JS INIT ---
     const floorY = -50, T = 350, W = 1200, H = 1200;
     let isDoorOpen = false, isPowered = false, isInteracting = false;
     let velocity = new THREE.Vector3(), move = {x:0, y:0}, savedModels = [], mixers = [];
@@ -143,17 +141,27 @@
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = .5; // Boosted for better lighting close-up
+
     renderer.setClearColor(0x111111, 1); 
     renderer.domElement.style.position = 'absolute';
     renderer.domElement.style.top = '0';
     renderer.domElement.style.zIndex = '2'; 
     document.body.appendChild(renderer.domElement);
 
-    scene.add(new THREE.AmbientLight(0xffffff, 1.5));
+    const pmremGenerator = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 1.2));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 2.5);
+    dirLight.position.set(0, 300, 0); // Moved to top-center to light models from all sides
+    scene.add(dirLight);
+
     const texLoader = new THREE.TextureLoader();
     const loader = new GLTFLoader();
 
-    // MEMORY FIX: Shared Texture Cache
     const textureCache = {};
     const getTex = (url) => {
         if (!textureCache[url]) textureCache[url] = texLoader.load(url);
@@ -175,7 +183,9 @@
         { src: 'tablecloth_lowpoly.glb', p: [5, -35, -380], r: [0, 0], s: [90, 90, 90] },
         { src: 'textured.glb', p: [1, 27, -385], r: [0, 0], s: [14, 14, 14] },
         { src: 'tablecloth_lowpoly.glb', p: [-69, -35, -265], r: [0, 90], s: [90, 90, 90] },
-        { src: 'tablecloth_lowpoly.glb', p: [79, -35, -265], r: [0, 90], s: [90, 90, 90] }
+        { src: 'tablecloth_lowpoly.glb', p: [79, -35, -265], r: [0, 90], s: [90, 90, 90] },
+        { src: 'hbday.glb', p: [-9, 170, -560], r: [0, 0], s: [92, 92, 92] },
+        { src: 'indu.glb', p: [-18, 90, -578], r: [0, 6], s: [56, 56, 56] }
     ];
 
     async function boot() {
@@ -199,19 +209,46 @@
             progressBar.style.width = `${(loadedCount / glbItems.length) * 100}%`;
             if(blob) {
                 const url = URL.createObjectURL(blob);
-                loader.load(url, (gltf) => {
+                                loader.load(url, (gltf) => {
                     const model = gltf.scene;
+                    
+                    model.traverse(node => {
+                        if (node.isMesh && node.material) {
+                            // TARGET: Balloons and Birthday Sign
+                            if (item.src === 'indu.glb' || item.src === 'hbday.glb') {
+                                node.material.metalness = 1.0;       // Must be 1 for metal
+                                node.material.roughness = 0.05;      // Slight roughness keeps the "shine" visible
+                                node.material.envMapIntensity = 15.0; // High, but not so high it washes out detail
+                                
+                                // Color tuning: Makes the gold "deeper" so reflections show up better
+                                if(node.material.color) {
+                                    node.material.color.multiplyScalar(0.8); 
+                                }
+                            } else {
+                                // TARGET: Normal furniture
+                                node.material.metalness = 0.0;
+                                node.material.roughness = 0.8;
+                                node.material.envMapIntensity = 1.0;
+                            }
+                            node.material.needsUpdate = true;
+                        }
+                    });
+
                     model.position.set(item.p[0], item.p[1], item.p[2]);
                     model.rotation.set(THREE.MathUtils.degToRad(item.r[0]), THREE.MathUtils.degToRad(item.r[1]), 0);
                     model.scale.set(item.s[0], item.s[1], item.s[2]);
+                    
                     if (gltf.animations.length > 0) {
                         const mixer = new THREE.AnimationMixer(model);
                         gltf.animations.forEach(clip => mixer.clipAction(clip).play());
                         mixers.push(mixer);
                     }
+                    
                     scene.add(model);
                     URL.revokeObjectURL(url);
                 });
+
+
             }
         }
 
@@ -273,29 +310,74 @@
         }, 1000);
     }
 
-    // --- PRO TOOLS (FIXED) ---
-    window.snap = (id, val) => { document.getElementById(id).value = val; document.getElementById('box-'+id).value = val; updateTransform(); };
-    window.step = (id, amt) => { let el = document.getElementById(id); el.value = (parseFloat(el.value) + amt).toFixed(1); document.getElementById('box-'+id).value = el.value; updateTransform(); };
-    const config = [{ id: 'posX', label: 'Pos X', min: -1200, max: 1200 }, { id: 'posY', label: 'Pos Y', min: -150, max: 800 }, { id: 'posZ', label: 'Pos Z', min: -1200, max: 1200 }, { id: 'rotY', label: 'Rot Horiz', min: 0, max: 360, snaps: [0, 90, 180, 270] }, { id: 'rotX', label: 'Rot Vert', min: 0, max: 360, snaps: [0, 90, 180, 270] }, { id: 'width', label: 'Scale W', min: 1, max: 800 }, { id: 'height', label: 'Scale H', min: 1, max: 800 }];
+    // --- PRO TOOLS FIX ---
+    window.snap = (id, val) => { 
+        document.getElementById(id).value = val; 
+        document.getElementById('box-'+id).value = val; 
+        updateTransform(); 
+    };
+    window.step = (id, amt) => { 
+        let el = document.getElementById(id); 
+        el.value = (parseFloat(el.value) + amt).toFixed(1); 
+        document.getElementById('box-'+id).value = el.value; 
+        updateTransform(); 
+    };
+
+    const config = [
+        { id: 'posX', label: 'Pos X', min: -1200, max: 1200 }, 
+        { id: 'posY', label: 'Pos Y', min: -150, max: 800 }, 
+        { id: 'posZ', label: 'Pos Z', min: -1200, max: 1200 }, 
+        { id: 'rotY', label: 'Rot Horiz', min: 0, max: 360, snaps: [0, 90, 180, 270] }, 
+        { id: 'rotX', label: 'Rot Vert', min: 0, max: 360, snaps: [0, 90, 180, 270] }, 
+        { id: 'width', label: 'Scale W', min: 1, max: 800 }, 
+        { id: 'height', label: 'Scale H', min: 1, max: 800 }
+    ];
+
     const dynContainer = document.getElementById('dynamic-controls');
     config.forEach(c => {
         const div = document.createElement('div');
-        div.innerHTML = `<div class="ctrl-row"><label>${c.label}</label><div class="val-grp"><button class="step-b" onclick="window.step('${c.id}', -5)">-</button><input type="number" id="box-${c.id}" class="num-in" value="0" step="1"><button class="step-b" onclick="window.step('${c.id}', 5)">+</button></div></div><input type="range" id="${c.id}" min="${c.min}" max="${c.max}" value="0" step="1">${c.snaps ? `<div class="snap-row">${c.snaps.map(s => `<div class="snap-dot" onclick="window.snap('${c.id}', ${s})">${s}°</div>`).join('')}</div>` : ''}`;
+        div.innerHTML = `
+            <div class="ctrl-row">
+                <label>${c.label}</label>
+                <div class="val-grp">
+                    <button class="step-b" onclick="window.step('${c.id}', -5)">-</button>
+                    <input type="number" id="box-${c.id}" class="num-in" value="0" step="1">
+                    <button class="step-b" onclick="window.step('${c.id}', 5)">+</button>
+                </div>
+            </div>
+            <input type="range" id="${c.id}" min="${c.min}" max="${c.max}" value="0" step="1">
+            ${c.snaps ? `<div class="snap-row">${c.snaps.map(s => `<div class="snap-dot" onclick="window.snap('${c.id}', ${s})">${s}°</div>`).join('')}</div>` : ''}
+        `;
         dynContainer.appendChild(div);
-        document.getElementById(c.id).oninput = updateTransform;
+        
+        const slider = document.getElementById(c.id);
+        const box = document.getElementById('box-'+c.id);
+        
+        slider.oninput = () => { box.value = slider.value; updateTransform(); };
+        box.oninput = () => { slider.value = box.value; updateTransform(); };
     });
 
     document.getElementById('file-input').onchange = (e) => {
         const file = e.target.files[0]; if (!file) return;
         const url = URL.createObjectURL(file);
-        const spawnPos = new THREE.Vector3(0, 0, -60).applyQuaternion(camera.quaternion).add(camera.position);
+        const spawnPos = new THREE.Vector3(0, 0, -100).applyQuaternion(camera.quaternion).add(camera.position);
         if (file.name.match(/\.(jpg|jpeg|png|webp)$/i)) {
             texLoader.load(url, (tex) => {
                 const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: tex, side: 2, transparent: true }));
                 m.position.copy(spawnPos); m.scale.set(60, 60, 1); addUserModel(m, file.name, true);
             });
         } else {
-            loader.load(url, (gltf) => { gltf.scene.position.copy(spawnPos); addUserModel(gltf.scene, file.name, false); });
+            loader.load(url, (gltf) => { 
+                const model = gltf.scene;
+                model.traverse(node => { 
+                    if(node.isMesh && node.material) {
+                        node.material.envMapIntensity = 2.5; 
+                        node.material.roughness = 0.02;
+                        node.material.metalness = 1.0;
+                    }
+                });
+                model.position.copy(spawnPos); addUserModel(model, file.name, false); 
+            });
         }
     };
 
@@ -309,9 +391,10 @@
 
     function startEditing(i) {
         window.editingIndex = i; const m = savedModels[i].mesh;
-        document.getElementById('posX').value = Math.round(m.position.x); document.getElementById('posY').value = Math.round(m.position.y); document.getElementById('posZ').value = Math.round(m.position.z);
-        document.getElementById('width').value = Math.round(m.scale.x); document.getElementById('height').value = Math.round(m.scale.y);
-        document.getElementById('rotX').value = Math.round(THREE.MathUtils.radToDeg(m.rotation.x)); document.getElementById('rotY').value = Math.round(THREE.MathUtils.radToDeg(m.rotation.y));
+        const sync = (id, val) => { document.getElementById(id).value = Math.round(val); document.getElementById('box-'+id).value = Math.round(val); };
+        sync('posX', m.position.x); sync('posY', m.position.y); sync('posZ', m.position.z);
+        sync('width', m.scale.x); sync('height', m.scale.y);
+        sync('rotX', THREE.MathUtils.radToDeg(m.rotation.x)); sync('rotY', THREE.MathUtils.radToDeg(m.rotation.y));
     }
 
     function updateTransform() {
@@ -336,12 +419,6 @@
         });
     }
 
-    document.getElementById('copy-btn').onclick = () => {
-        let output = "";
-        savedModels.forEach((m, i) => { output += `ITEM ${i+1}: ${m.name}\nPos: [${Math.round(m.mesh.position.x)}, ${Math.round(m.mesh.position.y)}, ${Math.round(m.mesh.position.z)}]\nRot: [${Math.round(THREE.MathUtils.radToDeg(m.mesh.rotation.x))}°, ${Math.round(THREE.MathUtils.radToDeg(m.mesh.rotation.y))}°]\nScale: [${Math.round(m.mesh.scale.x)}, ${Math.round(m.mesh.scale.y)}]\n------------------\n`; });
-        navigator.clipboard.writeText(output).then(() => alert("Copied!"));
-    };
-
     const box = (w, h, d, x, y, z, color) => {
         const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), new THREE.MeshStandardMaterial({color, roughness: 0.1}));
         m.position.set(x,y,z); scene.add(m); return m;
@@ -362,8 +439,6 @@
     zMove.addEventListener('touchstart', e => { if(isInteracting) return; const t = e.changedTouches[0]; joyId = t.identifier; joySt = {x:t.clientX, y:t.clientY}; joyC.style.display='block'; joyC.style.left=t.clientX+'px'; joyC.style.top=t.clientY+'px'; });
     zMove.addEventListener('touchmove', e => { if(isInteracting) return; for(let t of e.changedTouches) if(t.identifier === joyId) { let dx = t.clientX-joySt.x, dy = t.clientY-joySt.y; const d = Math.min(Math.sqrt(dx*dx+dy*dy), 35); const a = Math.atan2(dy, dx); joyS.style.transform = `translate(calc(-50% + ${Math.cos(a)*d}px), calc(-50% + ${Math.sin(a)*d}px))`; move = {x: Math.cos(a)*d/35, y: Math.sin(a)*d/35}; } });
     zMove.addEventListener('touchend', () => { joyId=null; move={x:0,y:0}; joyC.style.display='none'; });
-    
-    // LOOK SENSITIVITY REDUCED: 0.003 -> 0.002
     zLook.addEventListener('touchstart', e => { if(isInteracting) return; lookId = e.changedTouches[0].identifier; lastL = {x:e.changedTouches[0].clientX, y:e.changedTouches[0].clientY}; });
     zLook.addEventListener('touchmove', e => { if(isInteracting) return; for(let t of e.changedTouches) if(t.identifier === lookId) { camera.rotation.y -= (t.clientX - lastL.x) * 0.0035; camera.rotation.x -= (t.clientY - lastL.y) * 0.0035; camera.rotation.x = Math.max(-1.4, Math.min(1.4, camera.rotation.x)); lastL = {x:t.clientX, y:t.clientY}; } });
 
@@ -379,19 +454,14 @@
         requestAnimationFrame(animate);
         const delta = clock.getDelta();
         mixers.forEach(m => m.update(delta));
-
         if(!isInteracting && (move.x !== 0 || move.y !== 0)) {
             fVec.set(0,0,-1).applyQuaternion(camera.quaternion); fVec.y=0; fVec.normalize();
             rVec.set(1,0,0).applyQuaternion(camera.quaternion); rVec.y=0; rVec.normalize();
-            // MOVEMENT SPEED REDUCED: 3.0 -> 1.5
             velocity.add(fVec.multiplyScalar(-move.y *.8)).add(rVec.multiplyScalar(move.x * 1.5));
         }
         velocity.multiplyScalar(0.9); camera.position.add(velocity);
-        
-        // COLLISION & BOUNDARIES
         camera.position.x = Math.max(-550, Math.min(550, camera.position.x)); camera.position.z = Math.max(-550, Math.min(550, camera.position.z));
         if(Math.abs(camera.position.z) < 25 && (!isDoorOpen || Math.abs(camera.position.x) > 45)) camera.position.z = camera.position.z > 0 ? 25 : -25;
-        
         savedModels.forEach(m => m.label.quaternion.copy(camera.quaternion));
         document.getElementById('door-btn').style.display = Math.abs(camera.position.z) < 180 ? 'block' : 'none';
         pBtn.style.display = (camera.position.z < 0 && camera.position.distanceTo(cssObj.position) < 450) ? 'block' : 'none';
@@ -400,7 +470,6 @@
         cssRenderer.render(cssScene, camera); renderer.render(scene, camera); 
         document.getElementById('room-display').innerText = camera.position.z > 0 ? "SPAWN ROOM" : "TV ROOM";
     }
-
     boot();
 </script>
 </body>
